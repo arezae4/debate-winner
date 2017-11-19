@@ -1,5 +1,5 @@
 import json
-import fightin_words.fightin_words as fw
+import fightin_words as fw
 import sklearn.feature_extraction.text as sk_text
 import logging
 from nltk.stem.porter import PorterStemmer
