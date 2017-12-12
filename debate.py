@@ -9,7 +9,11 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from sklearn import linear_model
 import numpy as np
-
+from sklearn.model_selection import GridSearchCV
+from sklearn.feature_selection import GenericUnivariateSelect
+from sklearn.feature_selection import mutual_info_classif,f_classif,chi2
+from sklearn.model_selection import LeaveOneOut
+from sklearn.svm import SVC
 
 def custom_tokenizer(doc):
     analyzer = sk_text.CountVectorizer().build_analyzer()
@@ -116,10 +120,10 @@ class Debate:
 
 class FeatureExporter:
 
-    def __init__(self,debate):
+    def __init__(self,debate,k_talkingpoint):
         self.debate = debate
         self.debate_ids = list(debate.debates.keys())
-
+        self.k_talkingpoint = k_talkingpoint
 
     # see Conversational Flow in Oxford-style Debates section 3
     def coverage_for_id(self,debate_id, round,sideX,sideY):
@@ -132,7 +136,7 @@ class FeatureExporter:
         cv = sk_text.CountVectorizer(stop_words='english',tokenizer=custom_tokenizer)
         cv.fit_transform([textY])
         textY_words = cv.vocabulary_.items()
-        [forTP,againstTP] = debate.talking_points(debate_id,30)
+        [forTP,againstTP] = debate.talking_points(debate_id,self.k_talkingpoint)
 
         if(sideX == 'for'):
             tp = forTP
@@ -175,9 +179,9 @@ class FeatureExporter:
         introduc_words = ' '.join(introduc_words)
         discuss_words = ' '.join(discuss_words)
         discuss_words_opoonent = ' '.join(discuss_words_opoonent)
-        cv1 = sk_text.CountVectorizer(stop_words='english',tokenizer=custom_tokenizer)
-        cv2 = sk_text.CountVectorizer(stop_words='english',tokenizer=custom_tokenizer)
-        cv3 = sk_text.CountVectorizer(stop_words='english',tokenizer=custom_tokenizer)
+        cv1 = sk_text.CountVectorizer(stop_words='english')
+        cv2 = sk_text.CountVectorizer(stop_words='english')
+        cv3 = sk_text.CountVectorizer(stop_words='english')
         cv1.fit_transform([introduc_words])
         introduc_words = cv1.vocabulary_.keys()
         cv2.fit_transform([discuss_words])
@@ -212,9 +216,9 @@ class FeatureExporter:
         return np.asarray(result, dtype=np.int)
 
 class winner_predictor:
-    def __init__(self,debate):
+    def __init__(self,debate,k_talkingpoint):
         self.debate = debate
-        self.featureExporter = FeatureExporter(debate)
+        self.featureExporter = FeatureExporter(debate,k_talkingpoint)
         self.nsamples = len(debate.debates.keys())
         logging.debug(self.nsamples)
         self.nfeatures = 12
@@ -262,6 +266,7 @@ class winner_predictor:
 
         self.X[:,10] = discusspoints_for
         self.X[:,11] = discusspoints_against
+
         self.Y = self.featureExporter.winner_labels()
 
         self.X.tofile(feauture_outfile, ',', ' %.4f')
@@ -270,11 +275,29 @@ class winner_predictor:
     def load_features(self,feature_file,label_file):
         self.X = np.fromfile(feature_file,dtype=float,sep=',')
         self.X.resize(self.nsamples,self.nfeatures)
+        #self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
+        self.X = (self.X - self.X.min(axis=0)) / (self.X.max(axis=0) - self.X.min(axis=0))  # min-max normalization
+
+        logging.debug(self.X.mean(axis=0))
+        logging.debug(self.X.std(axis=0))
         self.Y = np.fromfile(label_file,dtype=int,sep=',')
         self.Y.resize(self.nsamples)
+        logging.debug('pos: {}'.format(np.sum(self.Y == 1)))
 
     def logistic_regression(self):
-        model = linear_model.LogisticRegression(penalty='l2')
+        Cs = list(10 ** n for n in range(-7,8))
+        tuned_params = [{'C' : Cs, 'penalty':['l1'],'solver':['liblinear'],'tol':[1e-4]},
+                    {'C' : Cs, 'penalty':['l2'],'solver':['lbfgs'],'tol':[1e-4]}]
+
+        model = GridSearchCV(linear_model.LogisticRegression(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
+        #model = linear_model.LogisticRegressionCV(penalty=penalty,Cs= Cs,cv=3,n_jobs=-1,tol=1e-4,solver='saga')
+        return model
+
+    def svm(self):
+        Cs = list(10 ** n for n in range(-5,5))
+        tuned_params = [{'kernel':('linear', 'rbf', 'poly'), 'C':Cs}]
+
+        model = GridSearchCV(SVC(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
         return model
 
     def loo_trainAndPredict(self,debate_id):
@@ -287,21 +310,38 @@ class winner_predictor:
     def loocv(self,classifier):
 
         predictions = np.zeros(self.nsamples,dtype=np.int)
-        for i in range(0,self.nsamples-1):
-            logging.debug(i)
-            X = np.zeros([self.nsamples-1,self.nfeatures],dtype=np.double)
-            Y = np.zeros(self.nsamples-1,dtype=np.int)
+        loo = LeaveOneOut()
+        loo.get_n_splits(self.X)
 
-            X[0:i] = self.X[0:i]
-            X[i:] = self.X[i+1:]
-            Y[0:i] = self.Y[0:i]
-            Y[i:] = self.Y[i+1:]
+        for train_idx, test_idx in loo.split(self.X):
+            X_train, X_test = self.X[train_idx], self.X[test_idx]
+            Y_train, Y_test = self.Y[train_idx], self.Y[test_idx]
 
-            classifier.fit(X,Y)
-            logging.debug(classifier.score(X,Y))
-            sample = self.X[i,:].reshape(1,-1)
-            predictions[i] = classifier.predict(sample)
-            logging.debug(predictions[i])
+
+        #for i in range(0,self.nsamples-1):
+        #    logging.debug(i)
+        #    X_train = np.zeros([self.nsamples-1,self.nfeatures],dtype=np.double)
+        #    Y_train = np.zeros(self.nsamples-1,dtype=np.int)
+
+        #    X_train[0:i] = self.X[0:i]
+        #    X_train[i:] = self.X[i+1:]
+        #    Y_train[0:i] = self.Y[0:i]
+        #    Y_train[i:] = self.Y[i+1:]
+
+            # feature selection
+            feature_selector = GenericUnivariateSelect(score_func=chi2,mode='percentile', param=40)
+
+            logging.debug(X_train.shape)
+            X_train_new = feature_selector.fit_transform(X_train,Y_train)
+            logging.debug(X_train_new.shape)
+            classifier.fit(X_train_new,Y_train)
+            logging.debug(classifier.score(X_train_new,Y_train))
+            logging.debug(classifier.best_params_)
+            logging.debug(feature_selector.get_support())
+            #X_test = self.X[i,feature_selector.get_support()].reshape(1,-1)
+            X_test_new = X_test[0,feature_selector.get_support()].reshape(1,-1)
+            predictions[test_idx] = classifier.predict(X_test_new)
+            logging.debug(predictions[test_idx])
 
         accuracy = np.sum(predictions == self.Y)/self.nsamples
         return accuracy
@@ -309,14 +349,14 @@ class winner_predictor:
 if __name__ == '__main__':
     logging.getLogger().setLevel(logging.DEBUG)
     debate = Debate('iq2_data_release/iq2_data_release.json')
-    [For,against] = debate.talking_points('afghanistan-lost-cause',30)
+    [For,against] = debate.talking_points('afghanistan-lost-cause',20)
 
     print('for talking points:')
     print(For)
     print('against talking points:')
     print(against)
 
-    fexporter = FeatureExporter(debate)
+    #fexporter = FeatureExporter(debate,20)
 
     #print(fexporter.coverage_for_id('040914%20Millennials',0,'for','for'))
     #print(fexporter.coverage_for_id('040914%20Millennials',1,'for','against'))
@@ -325,7 +365,7 @@ if __name__ == '__main__':
     #print(fexporter.discussionpoints_for_id('040914%20Millennials','for'))
     #print(fexporter.discussion_points('for'))
     #print(debate["title"])
-    predictor = winner_predictor(debate)
-    #predictor.produce_features('features.txt','labels.txt')
-    predictor.load_features('features.txt','labels.txt')
+    predictor = winner_predictor(debate,20)
+    #predictor.produce_features('features3.txt','labels.txt')
+    predictor.load_features('features3.txt','labels.txt')
     print(predictor.loocv(predictor.logistic_regression()))
