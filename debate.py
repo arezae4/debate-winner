@@ -109,7 +109,7 @@ class Debate:
         results = self.debates[debate_id]['results']
         pre_results = results['pre']
         post_results = results['post']
-        vote_diff_for = post_results['for'] - pre_results['against']
+        vote_diff_for = post_results['for'] - pre_results['for']
         vote_diff_against = post_results['against'] - pre_results['against']
         if(vote_diff_for > vote_diff_against):
             return 'for'
@@ -179,9 +179,9 @@ class FeatureExporter:
         introduc_words = ' '.join(introduc_words)
         discuss_words = ' '.join(discuss_words)
         discuss_words_opoonent = ' '.join(discuss_words_opoonent)
-        cv1 = sk_text.CountVectorizer(stop_words='english')
-        cv2 = sk_text.CountVectorizer(stop_words='english')
-        cv3 = sk_text.CountVectorizer(stop_words='english')
+        cv1 = sk_text.CountVectorizer(stop_words='english', tokenizer=custom_tokenizer)
+        cv2 = sk_text.CountVectorizer(stop_words='english',tokenizer=custom_tokenizer)
+        cv3 = sk_text.CountVectorizer(stop_words='english',tokenizer=custom_tokenizer)
         cv1.fit_transform([introduc_words])
         introduc_words = cv1.vocabulary_.keys()
         cv2.fit_transform([discuss_words])
@@ -300,13 +300,7 @@ class winner_predictor:
         model = GridSearchCV(SVC(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
         return model
 
-    def loo_trainAndPredict(self,debate_id):
 
-        X = self.X[[range(0,i),range(i+1,self.nsamples)],:]
-        Y = self.Y[[range(0,i),range(i+1,self.nsamples)]]
-
-        #classifier.fit(X,Y)
-        #predictions[i] = classifier.predict(self.X[i,:])
     def loocv(self,classifier):
 
         predictions = np.zeros(self.nsamples,dtype=np.int)
@@ -329,7 +323,7 @@ class winner_predictor:
         #    Y_train[i:] = self.Y[i+1:]
 
             # feature selection
-            feature_selector = GenericUnivariateSelect(score_func=chi2,mode='percentile', param=40)
+            feature_selector = GenericUnivariateSelect(score_func=chi2,mode='percentile', param=80)
 
             logging.debug(X_train.shape)
             X_train_new = feature_selector.fit_transform(X_train,Y_train)
@@ -366,6 +360,6 @@ if __name__ == '__main__':
     #print(fexporter.discussion_points('for'))
     #print(debate["title"])
     predictor = winner_predictor(debate,20)
-    #predictor.produce_features('features3.txt','labels.txt')
-    predictor.load_features('features3.txt','labels.txt')
+    #predictor.produce_features('features4.txt','labels.txt')
+    predictor.load_features('features4.txt','labels.txt')
     print(predictor.loocv(predictor.logistic_regression()))
