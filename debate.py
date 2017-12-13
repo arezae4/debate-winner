@@ -282,13 +282,14 @@ class winner_predictor:
     def load_features(self,feature_file,label_file):
         self.X = np.fromfile(feature_file,dtype=float,sep=',')
         self.X.resize(self.nsamples,self.nfeatures)
-        self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
-        #newFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
-        #newFeature.resize(self.nsamples,1)
-        # newFeature = newFeature
+        self.entropyFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
+        self.entropyFeature.resize(self.nsamples,1)
+        #newFeature = newFeature
         #print(newFeature)
         #self.X = np.concatenate((self.X, newFeature), axis=1)
         #self.X = (self.X - self.X.min(axis=0)) / (self.X.max(axis=0) - self.X.min(axis=0))  # min-max normalization
+        self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
+        self.entropyFeature = (self.entropyFeature - self.entropyFeature.mean(axis=0)) / self.entropyFeature.std(axis=0)
 
         logging.debug(self.X.mean(axis=0))
         logging.debug(self.X.std(axis=0))
@@ -303,8 +304,8 @@ class winner_predictor:
         #[{'C' : Cs, 'penalty':['l1'],'solver':['saga'],'tol':[1e-2]}]\
                   #  [{'C' : Cs, 'penalty':['l2'],'solver':['lbfgs'],'tol':[1e-2]}]
 
-        model = GridSearchCV(linear_model.LogisticRegression(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
-        #model = linear_model.LogisticRegressionCV(penalty=penalty,Cs= Cs,cv=3,n_jobs=-1,tol=1e-4,solver='saga')
+        #model = GridSearchCV(linear_model.LogisticRegression(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
+        model = linear_model.LogisticRegression(penalty='l2',C= 10e7,n_jobs=-1,tol=1e-4,solver='lbfgs')
         return model
 
     def svm(self):
@@ -313,7 +314,7 @@ class winner_predictor:
         tuned_params = [{'kernel':['poly'], 'C':[10000]}]
 
         #model = GridSearchCV(SVC(random_state=1000),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
-        model = SVC(random_state=0,kernel='poly',C=100000)
+        model = SVC(random_state=0,kernel='poly',C=10000,degree=5)
         return model
 
 
@@ -327,6 +328,7 @@ class winner_predictor:
         for train_idx, test_idx in loo.split(self.X):
             X_train, X_test = self.X[train_idx], self.X[test_idx]
             Y_train, Y_test = self.Y[train_idx], self.Y[test_idx]
+            entropy_train, entropy_test = self.entropyFeature[train_idx],self.entropyFeature[test_idx]
 
 
         #for i in range(0,self.nsamples-1):
@@ -340,10 +342,13 @@ class winner_predictor:
         #    Y_train[i:] = self.Y[i+1:]
 
             # feature selection
-            feature_selector = GenericUnivariateSelect(score_func=mutual_info_classif,mode='percentile', param=70)
+            feature_selector = GenericUnivariateSelect(score_func=f_classif,mode='percentile', param=25)
 
             logging.debug(X_train.shape)
             X_train_new = feature_selector.fit_transform(X_train,Y_train)
+            #X_train_new = np.concatenate((X_train_new, entropy_train), axis=1)
+            X_test_new = X_test[0,feature_selector.get_support()].reshape(1,-1)
+            #X_test_new = np.concatenate((X_test_new, entropy_test), axis=1)
             logging.debug(X_train_new.shape)
             classifier.fit(X_train_new,Y_train)
             logging.debug(classifier.score(X_train_new,Y_train))
@@ -352,7 +357,7 @@ class winner_predictor:
             logging.debug(X_test.shape)
             logging.debug(feature_selector.get_support())
             #X_test = self.X[i,feature_selector.get_support()].reshape(1,-1)
-            X_test_new = X_test[0,feature_selector.get_support()].reshape(1,-1)
+
             predictions[test_idx] = classifier.predict(X_test_new)
             logging.debug(predictions[test_idx])
             logging.debug(predictions[test_idx] == Y_test)
@@ -561,4 +566,4 @@ if __name__ == '__main__':
     # newFeature = entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate)
     #predictor.produce_features('features_20_lem_div.txt','labels2.txt')
     predictor.load_features('features_20_lem_div.txt','labels2.txt')
-    print(predictor.loocv(predictor.svm()))
+    print(predictor.loocv(predictor.logistic_regression()))
