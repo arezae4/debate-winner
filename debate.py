@@ -111,7 +111,7 @@ class Debate:
         post_results = results['post']
         vote_diff_for = post_results['for'] - pre_results['for']
         vote_diff_against = post_results['against'] - pre_results['against']
-        if(vote_diff_for > vote_diff_against):
+        if(vote_diff_for >= vote_diff_against):
             return 'for'
         else:
             return 'against'
@@ -221,7 +221,7 @@ class winner_predictor:
         self.featureExporter = FeatureExporter(debate,k_talkingpoint)
         self.nsamples = len(debate.debates.keys())
         logging.debug(self.nsamples)
-        self.nfeatures = 12
+        self.nfeatures = 18
         self.X = np.zeros([self.nsamples,self.nfeatures])
         self.Y = np.zeros(self.nsamples)
 
@@ -267,6 +267,13 @@ class winner_predictor:
         self.X[:,10] = discusspoints_for
         self.X[:,11] = discusspoints_against
 
+        self.X[:,12] = self.X[:,0] / (self.X[:,1] + 1e-4) # smoothing for divide by zero case
+        self.X[:,13] = self.X[:,2] / (self.X[:,3] + 1e-4)
+        self.X[:,14] = self.X[:,4] / (self.X[:,5] + 1e-4)
+        self.X[:,15] = self.X[:,6] / (self.X[:,7] + 1e-4)
+        self.X[:,16] = self.X[:,8] / (self.X[:,9] + 1e-4)
+        self.X[:,17] = self.X[:,10] / (self.X[:,11] + 1e-4)
+
         self.Y = self.featureExporter.winner_labels()
 
         self.X.tofile(feauture_outfile, ',', ' %.4f')
@@ -275,13 +282,13 @@ class winner_predictor:
     def load_features(self,feature_file,label_file):
         self.X = np.fromfile(feature_file,dtype=float,sep=',')
         self.X.resize(self.nsamples,self.nfeatures)
-        #self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
-        newFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
-        newFeature.resize(self.nsamples,1)
+        self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
+        #newFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
+        #newFeature.resize(self.nsamples,1)
         # newFeature = newFeature
-        print(newFeature)
-        self.X = np.concatenate((self.X, newFeature), axis=1)
-        self.X = (self.X - self.X.min(axis=0)) / (self.X.max(axis=0) - self.X.min(axis=0))  # min-max normalization
+        #print(newFeature)
+        #self.X = np.concatenate((self.X, newFeature), axis=1)
+        #self.X = (self.X - self.X.min(axis=0)) / (self.X.max(axis=0) - self.X.min(axis=0))  # min-max normalization
 
         logging.debug(self.X.mean(axis=0))
         logging.debug(self.X.std(axis=0))
@@ -291,18 +298,22 @@ class winner_predictor:
 
     def logistic_regression(self):
         Cs = list(10 ** n for n in range(-7,8))
-        tuned_params = [{'C' : Cs, 'penalty':['l1'],'solver':['liblinear'],'tol':[1e-4]},
-                    {'C' : Cs, 'penalty':['l2'],'solver':['lbfgs'],'tol':[1e-4]}]
+        tuned_params = [{'C' : [10e7], 'penalty':['l2'],'solver':['newton-cg'],'tol':[1e-3]}]
+
+        #[{'C' : Cs, 'penalty':['l1'],'solver':['saga'],'tol':[1e-2]}]\
+                  #  [{'C' : Cs, 'penalty':['l2'],'solver':['lbfgs'],'tol':[1e-2]}]
 
         model = GridSearchCV(linear_model.LogisticRegression(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
         #model = linear_model.LogisticRegressionCV(penalty=penalty,Cs= Cs,cv=3,n_jobs=-1,tol=1e-4,solver='saga')
         return model
 
     def svm(self):
-        Cs = list(10 ** n for n in range(-5,5))
-        tuned_params = [{'kernel':('linear', 'rbf', 'poly'), 'C':Cs}]
+        Cs = list(10 ** n for n in range(-7,7))
+        #tuned_params = [{'kernel':('linear', 'rbf', 'poly'), 'C':Cs}]
+        tuned_params = [{'kernel':['poly'], 'C':[10000]}]
 
-        model = GridSearchCV(SVC(),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
+        #model = GridSearchCV(SVC(random_state=1000),tuned_params,cv=3,scoring='accuracy',n_jobs=-1)
+        model = SVC(random_state=0,kernel='poly',C=100000)
         return model
 
 
@@ -311,6 +322,7 @@ class winner_predictor:
         predictions = np.zeros(self.nsamples,dtype=np.int)
         loo = LeaveOneOut()
         loo.get_n_splits(self.X)
+        correct_predictions = 0
 
         for train_idx, test_idx in loo.split(self.X):
             X_train, X_test = self.X[train_idx], self.X[test_idx]
@@ -328,21 +340,25 @@ class winner_predictor:
         #    Y_train[i:] = self.Y[i+1:]
 
             # feature selection
-            feature_selector = GenericUnivariateSelect(score_func=chi2,mode='percentile', param=80)
+            feature_selector = GenericUnivariateSelect(score_func=mutual_info_classif,mode='percentile', param=70)
 
             logging.debug(X_train.shape)
             X_train_new = feature_selector.fit_transform(X_train,Y_train)
             logging.debug(X_train_new.shape)
             classifier.fit(X_train_new,Y_train)
             logging.debug(classifier.score(X_train_new,Y_train))
-            logging.debug(classifier.best_params_)
+            #logging.debug(classifier.best_params_)
+            logging.debug(test_idx)
+            logging.debug(X_test.shape)
             logging.debug(feature_selector.get_support())
             #X_test = self.X[i,feature_selector.get_support()].reshape(1,-1)
             X_test_new = X_test[0,feature_selector.get_support()].reshape(1,-1)
             predictions[test_idx] = classifier.predict(X_test_new)
             logging.debug(predictions[test_idx])
-
+            logging.debug(predictions[test_idx] == Y_test)
+            #correct_predictions = predictions[]
         accuracy = np.sum(predictions == self.Y)/self.nsamples
+        #accuracy = correct_predictions / self.nsamples
         return accuracy
 
 class Entropy:
@@ -543,6 +559,6 @@ if __name__ == '__main__':
 
     # print(entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate))
     # newFeature = entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate)
-    #predictor.produce_features('features3.txt','labels.txt')
-    predictor.load_features('features3.txt','labels.txt')
-    print(predictor.loocv(predictor.logistic_regression()))
+    #predictor.produce_features('features_20_lem_div.txt','labels2.txt')
+    predictor.load_features('features_20_lem_div.txt','labels2.txt')
+    print(predictor.loocv(predictor.svm()))
