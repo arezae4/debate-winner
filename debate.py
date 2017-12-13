@@ -276,6 +276,11 @@ class winner_predictor:
         self.X = np.fromfile(feature_file,dtype=float,sep=',')
         self.X.resize(self.nsamples,self.nfeatures)
         #self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
+        newFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
+        newFeature.resize(self.nsamples,1)
+        # newFeature = newFeature
+        print(newFeature)
+        self.X = np.concatenate((self.X, newFeature), axis=1)
         self.X = (self.X - self.X.min(axis=0)) / (self.X.max(axis=0) - self.X.min(axis=0))  # min-max normalization
 
         logging.debug(self.X.mean(axis=0))
@@ -340,6 +345,175 @@ class winner_predictor:
         accuracy = np.sum(predictions == self.Y)/self.nsamples
         return accuracy
 
+class Entropy:
+    def __init__(self):
+        self.trigrams_count = {}
+        self.bigrams_count = {}
+        self.unigrams_count = {}
+        self.total_unigram = 0
+        self.normalizer ={}
+
+    def prep_training(self, jsonfile, debate):
+        with open(jsonfile, 'r') as f:
+            self.debates = json.load(f);
+
+        debate_ids = list(debate.debates.keys())
+        all_text = ''
+        for id in debate_ids:
+            debate = self.debates[id]
+            for_text = []
+            against_text = []
+            for t in debate['transcript']:
+                # logging.debug(t)
+                if t['segment'] == 0 and t['speakertype'] == 'for':
+                    for_text.extend(t['paragraphs'])
+                elif t['segment'] == 0 and t['speakertype'] == 'against':
+                    against_text.extend(t['paragraphs'])
+                else:
+                    pass
+
+            for_text = ' '.join(for_text)
+            against_text = ' '.join(against_text)
+            for_text.replace('-', ' ')
+            against_text.replace('-', ' ')
+            # all_text = ''.join(all_text, for_text,against_text)
+            all_text += for_text
+            all_text += against_text
+        pat = re.compile(r'([A-Z][^\.!?]*[\.!?])', re.M)
+        all_sents = pat.findall(all_text)
+        no_punc = []
+
+        translator = str.maketrans('', '', string.punctuation)
+        for sent in all_sents:
+            # sent = sent.translate(translator)
+            no_punc.append(sent.translate(translator))
+        print(no_punc[0])
+        print(all_sents[0].translate(translator))
+        return no_punc
+
+
+    def train(self, training):
+
+        trigrams_count = dict()
+        bigrams_count = dict()
+        unigrams_count = dict()
+
+        for sent in training:
+            trigrams = nltk.trigrams(sent.split(" "))
+            for trigram in trigrams:
+                key = '-'.join(list(trigram))
+                if key in trigrams_count:
+                    trigrams_count[key] += 1
+                else:
+                    trigrams_count[key] = 1
+            bigrams = nltk.bigrams(sent.split(" "))
+            for bigram in bigrams:
+                key = '-'.join(list(bigram))
+                if key in bigrams_count:
+                    bigrams_count[key] += 1
+                else:
+                    bigrams_count[key] = 1
+
+            unigrams = sent.split(" ")
+            for unigram in unigrams:
+                key = unigram
+                if key in unigrams_count:
+                    unigrams_count[key] += 1
+                else:
+                    unigrams_count[key] = 1
+                self.total_unigram += 1
+        self.unigrams_count = unigrams_count
+        self.bigrams_count = bigrams_count
+        self.trigrams_count = trigrams_count
+
+        #Normalzing the entropy of a sentence with respect to its length
+
+        normalizer = dict()
+
+        for sent in training:
+
+            current_Ent =  self.sent_entropy(sent)
+            key = len(sent.split(" "))
+            if key in normalizer:
+                normalizer[key] = (normalizer[key][0]+current_Ent, normalizer[key][1] + 1)
+            else:
+                normalizer[key] = (current_Ent, 1)
+
+        self.normalizer = normalizer
+
+    def feature_extractor(self,jsonfile, debate):
+
+        feature = []
+        debate_ids = list(debate.debates.keys())
+        pat = re.compile(r'([A-Z][^\.!?]*[\.!?])', re.M)
+        translator = str.maketrans('', '', string.punctuation)
+        for id in debate_ids:
+            debate = self.debates[id]
+            for_text = []
+            against_text = []
+            for t in debate['transcript']:
+                # logging.debug(t)
+                if t['segment'] == 0 and t['speakertype'] == 'for':
+                    for_text.extend(t['paragraphs'])
+                elif t['segment'] == 0 and t['speakertype'] == 'against':
+                    against_text.extend(t['paragraphs'])
+                else:
+                    pass
+
+            for_text = ' '.join(for_text)
+            against_text = ' '.join(against_text)
+
+            for_text.replace('-', ' ')
+            against_text.replace('-', ' ')
+            for_sents = pat.findall(for_text)
+            against_sents = pat.findall(against_text)
+            no_punc_for = []
+            no_punc_against = []
+
+
+            for sent in for_sents:
+                no_punc_for.append(sent.translate(translator))
+            for sent in against_sents:
+                no_punc_against.append(sent.translate(translator))
+
+            ent_par_for = self.para_entropy(no_punc_for)
+            ent_par_against = self.para_entropy(no_punc_against)
+
+            var_for = np.var(ent_par_for)
+            var_against = np.var(ent_par_against)
+            # print(ent_par_against)
+            # print("var_for : ", var_for)
+            # print("var_against : " , var_against)
+            feature.append(var_for-var_against)
+
+        return feature
+
+    def para_entropy(self, para):
+        ents = []
+        for sent in para:
+            key = len(sent.split(" "))
+            ents.append(self.normalizer[key][0] / self.normalizer[key][1] * self.sent_entropy(sent))
+        return ents
+
+    def sent_entropy(self, sent):
+        trigrams = list(nltk.trigrams(sent.split(" ")))
+        bigrams = list(nltk.bigrams(sent.split(" ")))
+        words = sent.split(" ")
+        prob = math.log2(self.unigrams_count[words[0]] / self.total_unigram)
+        if (len(words) > 1):
+            prob += math.log2(self.bigrams_count[words[0] + "-" + words[1]] / self.unigrams_count[words[0]])
+        if len(words) > 2:
+            for i in range(0, len(words) - 2):
+                try:
+                    prob += math.log2(
+                        self.trigrams_count['-'.join(trigrams[i])] / self.bigrams_count['-'.join(bigrams[i + 1])])
+                except:
+                    print(words)
+
+        return (-1/len(words)) * prob
+
+
+
 if __name__ == '__main__':
     logging.getLogger().setLevel(logging.DEBUG)
     debate = Debate('iq2_data_release/iq2_data_release.json')
@@ -360,6 +534,15 @@ if __name__ == '__main__':
     #print(fexporter.discussion_points('for'))
     #print(debate["title"])
     predictor = winner_predictor(debate,20)
-    #predictor.produce_features('features4.txt','labels.txt')
-    predictor.load_features('features4.txt','labels.txt')
+    # entropy = Entropy()
+    # training = entropy.prep_training('iq2_data_release/iq2_data_release.json', debate)
+    # mf = open("Temp.txt", "w")
+    # for sent in training:
+    #     mf.write(sent+"\n")
+    # entropy.train(training)
+
+    # print(entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate))
+    # newFeature = entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate)
+    #predictor.produce_features('features3.txt','labels.txt')
+    predictor.load_features('features3.txt','labels.txt')
     print(predictor.loocv(predictor.logistic_regression()))
