@@ -285,8 +285,8 @@ class winner_predictor:
     def load_features(self,feature_file,label_file):
         self.X = np.fromfile(feature_file,dtype=float,sep=',')
         self.X.resize(self.nsamples,self.nfeatures)
-        self.entropyFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
-        self.entropyFeature.resize(self.nsamples,4)
+        self.entropyFeature = np.array(np.fromfile('newFeatures.txt',dtype=float,sep=','))
+        self.entropyFeature.resize(self.nsamples,6)
         # newFeature = newFeature
         #print(newFeature)
         self.X = np.concatenate((self.X, self.entropyFeature), axis=1)
@@ -345,7 +345,7 @@ class winner_predictor:
         #    Y_train[i:] = self.Y[i+1:]
 
             # feature selection
-            feature_selector = GenericUnivariateSelect(score_func=f_classif,mode='percentile', param=25)
+            feature_selector = GenericUnivariateSelect(score_func=f_classif,mode='percentile', param=70)
 
             logging.debug(X_train.shape)
             X_train_new = feature_selector.fit_transform(X_train,Y_train)
@@ -472,6 +472,8 @@ class Entropy:
         feature2 = []
         feature3 = []
         feature4 = []
+        feature5 = []
+        feature6 = []
 
         debate_ids = list(debate.debates.keys())
         pat = re.compile(r'([A-Z][^\.!?]*[\.!?])', re.M)
@@ -550,22 +552,35 @@ class Entropy:
             feature2.append(var_against_discuss)
             feature3.append(var_for_intro)
             feature4.append(var_against_intro)
+            feature5.append(var_for_intro - var_for_discuss)
+            feature6.append(var_against_intro - var_against_discuss)
 
-        return feature1, feature2, feature3, feature4
+        return feature1, feature2, feature3, feature4, feature5, feature6
     def para_entropy(self, para):
         ents = []
         for sent in para:
             key = len(sent.split(" "))
-            ents.append(self.normalizer[key][0] / self.normalizer[key][1] * self.sent_entropy(sent))
+            try:
+                ents.append(self.normalizer[key][0] / self.normalizer[key][1] * self.sent_entropy(sent))
+            except:
+                ents.append(self.sent_entropy(sent))
         return ents
 
     def sent_entropy(self, sent):
         trigrams = list(nltk.trigrams(sent.split(" ")))
         bigrams = list(nltk.bigrams(sent.split(" ")))
         words = sent.split(" ")
-        prob = math.log2(self.unigrams_count[words[0]] / self.total_unigram)
+        prob = 0
+        try:
+
+            prob = math.log2(self.unigrams_count[words[0]] / self.total_unigram)
+        except:
+            pass
         if (len(words) > 1):
-            prob += math.log2(self.bigrams_count[words[0] + "-" + words[1]] / self.unigrams_count[words[0]])
+            try:
+                prob += math.log2(self.bigrams_count[words[0] + "-" + words[1]] / self.unigrams_count[words[0]])
+            except:
+                pass
         if len(words) > 2:
             for i in range(0, len(words) - 2):
                 try:
@@ -606,7 +621,10 @@ if __name__ == '__main__':
     # entropy.train(training)
 
     # print(entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate))
-    # newFeature = entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate)
+    # newFeatures = entropy.feature_extractor('iq2_data_release/iq2_data_release.json', debate)
+    # mf = open("newFeatures.txt", "w")
+    # for feature in newFeatures:
+    #     print(feature)
     #predictor.produce_features('features_20_lem_div.txt','labels2.txt')
     predictor.load_features('features_20_lem_div.txt','labels2.txt')
-    print(predictor.loocv(predictor.logistic_regression()))
+    print(predictor.loocv(predictor.svm()))
