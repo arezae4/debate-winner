@@ -14,6 +14,9 @@ from sklearn.feature_selection import GenericUnivariateSelect
 from sklearn.feature_selection import mutual_info_classif,f_classif,chi2
 from sklearn.model_selection import LeaveOneOut
 from sklearn.svm import SVC
+import re
+import string
+import math
 
 def custom_tokenizer(doc):
     analyzer = sk_text.CountVectorizer().build_analyzer()
@@ -283,13 +286,13 @@ class winner_predictor:
         self.X = np.fromfile(feature_file,dtype=float,sep=',')
         self.X.resize(self.nsamples,self.nfeatures)
         self.entropyFeature = np.array(np.fromfile('entropy_f.txt',dtype=float,sep=','))
-        self.entropyFeature.resize(self.nsamples,1)
-        #newFeature = newFeature
+        self.entropyFeature.resize(self.nsamples,4)
+        # newFeature = newFeature
         #print(newFeature)
-        #self.X = np.concatenate((self.X, newFeature), axis=1)
+        self.X = np.concatenate((self.X, self.entropyFeature), axis=1)
         #self.X = (self.X - self.X.min(axis=0)) / (self.X.max(axis=0) - self.X.min(axis=0))  # min-max normalization
         self.X = (self.X - self.X.mean(axis=0)) / self.X.std(axis=0) # z-score normalization
-        self.entropyFeature = (self.entropyFeature - self.entropyFeature.mean(axis=0)) / self.entropyFeature.std(axis=0)
+        # self.entropyFeature = (self.entropyFeature - self.entropyFeature.mean(axis=0)) / self.entropyFeature.std(axis=0)
 
         logging.debug(self.X.mean(axis=0))
         logging.debug(self.X.std(axis=0))
