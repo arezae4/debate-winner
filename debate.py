@@ -467,51 +467,91 @@ class Entropy:
 
     def feature_extractor(self,jsonfile, debate):
 
-        feature = []
+
+        feature1 = []
+        feature2 = []
+        feature3 = []
+        feature4 = []
+
         debate_ids = list(debate.debates.keys())
         pat = re.compile(r'([A-Z][^\.!?]*[\.!?])', re.M)
         translator = str.maketrans('', '', string.punctuation)
         for id in debate_ids:
             debate = self.debates[id]
-            for_text = []
-            against_text = []
+            for_text_intro = []
+            against_text_intro = []
+            for_text_discuss = []
+            against_text_discuss = []
             for t in debate['transcript']:
                 # logging.debug(t)
-                if t['segment'] == 0 and t['speakertype'] == 'for':
-                    for_text.extend(t['paragraphs'])
-                elif t['segment'] == 0 and t['speakertype'] == 'against':
-                    against_text.extend(t['paragraphs'])
+                if t['speakertype'] == 'for':
+                    if t['segment'] == 0:
+                        for_text_intro.extend(t['paragraphs'])
+                    elif t['segment'] == 1:
+                        for_text_discuss.extend(t['paragraphs'])
+                    else:
+                        pass
+
+                elif t['speakertype'] == 'against':
+                    if t['segment'] == 0:
+                        against_text_intro.extend(t['paragraphs'])
+                    elif t['segment'] == 1:
+                        against_text_discuss.extend(t['paragraphs'])
+                    else:
+                        pass
                 else:
                     pass
 
-            for_text = ' '.join(for_text)
-            against_text = ' '.join(against_text)
+            for_text_intro = ' '.join(for_text_intro)
+            against_text_intro = ' '.join(against_text_intro)
+            for_text_discuss = ' '.join(for_text_discuss)
+            against_text_discuss = ' '.join(against_text_discuss)
 
-            for_text.replace('-', ' ')
-            against_text.replace('-', ' ')
-            for_sents = pat.findall(for_text)
-            against_sents = pat.findall(against_text)
-            no_punc_for = []
-            no_punc_against = []
+            for_text_intro.replace('-', ' ')
+            against_text_intro.replace('-', ' ')
+            for_text_discuss.replace('-', ' ')
+            against_text_discuss.replace('-', ' ')
 
 
-            for sent in for_sents:
-                no_punc_for.append(sent.translate(translator))
-            for sent in against_sents:
-                no_punc_against.append(sent.translate(translator))
+            for_sents_intro = pat.findall(for_text_intro)
+            against_sents_intro = pat.findall(against_text_intro)
+            for_sents_discuss = pat.findall(for_text_discuss)
+            against_sents_discuss = pat.findall(against_text_discuss)
 
-            ent_par_for = self.para_entropy(no_punc_for)
-            ent_par_against = self.para_entropy(no_punc_against)
+            no_punc_for_intro = []
+            no_punc_against_intro = []
+            no_punc_for_discuss = []
+            no_punc_against_discuss = []
 
-            var_for = np.var(ent_par_for)
-            var_against = np.var(ent_par_against)
+            for sent in for_sents_intro:
+                no_punc_for_intro.append(sent.translate(translator))
+            for sent in against_sents_intro:
+                no_punc_against_intro.append(sent.translate(translator))
+
+            for sent in for_sents_discuss:
+                no_punc_for_discuss.append(sent.translate(translator))
+            for sent in against_sents_discuss:
+                no_punc_against_discuss.append(sent.translate(translator))
+
+            ent_par_for_intro = self.para_entropy(no_punc_for_intro)
+            ent_par_against_intro = self.para_entropy(no_punc_against_intro)
+            ent_par_for_discuss = self.para_entropy(no_punc_for_discuss)
+            ent_par_against_discuss = self.para_entropy(no_punc_against_discuss)
+
+            var_for_intro = np.var(ent_par_for_intro)
+            var_against_intro = np.var(ent_par_against_intro)
+            var_for_discuss = np.var(ent_par_for_discuss)
+            var_against_discuss = np.var(ent_par_against_discuss)
+
             # print(ent_par_against)
             # print("var_for : ", var_for)
             # print("var_against : " , var_against)
-            feature.append(var_for-var_against)
+            feature1.append(var_for_discuss)
+            feature2.append(var_against_discuss)
+            feature3.append(var_for_intro)
+            feature4.append(var_against_intro)
 
-        return feature
-
+        return feature1, feature2, feature3, feature4
     def para_entropy(self, para):
         ents = []
         for sent in para:
